@@ -3,14 +3,12 @@ import React, { useState, useEffect } from 'react';
 import { User, ArrowRight, Sparkles, Lock, KeyRound, UserPlus, LogIn, Loader2 } from 'lucide-react';
 import { AddToastFunction, ToastType } from '../types';
 import Footer from './Footer';
+import { api } from '../utils/api';
 
 interface LoginProps {
   onLogin: (username: string) => void;
   addToast: AddToastFunction;
 }
-
-// Key for storing the user database (username -> passcode map)
-const USERS_DB_KEY = 'taskmaster-users';
 
 const Login: React.FC<LoginProps> = ({ onLogin, addToast }) => {
   const [isRegistering, setIsRegistering] = useState(false);
@@ -24,104 +22,50 @@ const Login: React.FC<LoginProps> = ({ onLogin, addToast }) => {
     setPasscode('');
   }, [isRegistering]);
 
-  // Safely retrieve the user database from local storage
-  const getUsersDB = (): Record<string, { passcode: string }> => {
-    try {
-      const db = localStorage.getItem(USERS_DB_KEY);
-      if (!db) return {};
-      const parsed = JSON.parse(db);
-      // Basic validation to ensure it's an object
-      return typeof parsed === 'object' && parsed !== null ? parsed : {};
-    } catch (e) {
-      console.error("Error parsing user database from localStorage", e);
-      return {};
-    }
-  };
-
-  // Safely save a new user to the database, preserving existing users
-  const saveUserToDB = (newUsername: string, newPasscode: string): boolean => {
-    try {
-      const currentDB = getUsersDB();
-      
-      // Double-check to prevent overwriting (redundant check but safe)
-      if (currentDB[newUsername]) {
-        return false;
-      }
-
-      // Create a new object with all existing users PLUS the new one
-      // This ensures we do not remove any inserted data
-      const updatedDB = {
-        ...currentDB,
-        [newUsername]: { passcode: newPasscode }
-      };
-
-      localStorage.setItem(USERS_DB_KEY, JSON.stringify(updatedDB));
-      return true;
-    } catch (e) {
-      console.error("Error saving to localStorage", e);
-      return false;
-    }
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    // Simulation of network delay for better UX feel
+    // Slight delay for UI feel
     setTimeout(() => {
         processAuth();
-        setIsLoading(false);
-    }, 800);
+    }, 500);
   };
 
-  const processAuth = () => {
+  const processAuth = async () => {
     const trimmedUsername = username.trim();
     
     // Basic Validation
     if (!trimmedUsername) {
       addToast("Please enter a username", ToastType.WARNING);
+      setIsLoading(false);
       return;
     }
 
     if (!passcode || passcode.length !== 6 || !/^\d+$/.test(passcode)) {
       addToast("Passcode must be exactly 6 digits", ToastType.WARNING);
+      setIsLoading(false);
       return;
     }
 
-    const usersDB = getUsersDB();
-
-    if (isRegistering) {
-      // Registration Logic
-      if (usersDB[trimmedUsername]) {
-        addToast("Username already taken. Please choose another.", ToastType.ERROR);
-        return;
-      }
-
-      // Attempt to save the new user
-      const success = saveUserToDB(trimmedUsername, passcode);
-      
-      if (success) {
-        addToast("Account created and saved successfully!", ToastType.SUCCESS);
+    try {
+      if (isRegistering) {
+        // Registration via API
+        await api.register(trimmedUsername, passcode);
+        addToast("Account created successfully! Logging in...", ToastType.SUCCESS);
+        // Auto login after register
+        await api.login(trimmedUsername, passcode);
         onLogin(trimmedUsername);
       } else {
-        addToast("Failed to save account. Local storage might be full.", ToastType.ERROR);
+        // Login via API
+        await api.login(trimmedUsername, passcode);
+        addToast("Welcome back!", ToastType.SUCCESS);
+        onLogin(trimmedUsername);
       }
-
-    } else {
-      // Login Logic
-      const userRecord = usersDB[trimmedUsername];
-
-      if (!userRecord) {
-        addToast("User not found. Please register first.", ToastType.ERROR);
-        return;
-      }
-
-      if (userRecord.passcode !== passcode) {
-        addToast("Incorrect passcode.", ToastType.ERROR);
-        return;
-      }
-
-      onLogin(trimmedUsername);
+    } catch (error: any) {
+      addToast(error.message || "Authentication failed", ToastType.ERROR);
+    } finally {
+      setIsLoading(false);
     }
   };
 

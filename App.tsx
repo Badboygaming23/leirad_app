@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { ListTodo, Calendar, CheckCircle2, Layout, LogOut, User as UserIcon, AlertCircle, Clock, Layers, ChevronDown, CheckSquare, Trash2, Check, X, Loader2, Sparkles, ClipboardList, Archive, Settings, CircleHelp, Eye, EyeOff, Zap, Target, ArrowLeft, Timer, Play, Pause, RotateCcw, Wallet } from 'lucide-react';
+import { ListTodo, Calendar, CheckCircle2, Layout, LogOut, User as UserIcon, AlertCircle, Clock, Layers, ChevronDown, CheckSquare, Trash2, Check, X, Loader2, Sparkles, ClipboardList, Archive, Settings, CircleHelp, Eye, EyeOff, Zap, Target, ArrowLeft, Timer, Play, Pause, RotateCcw, Wallet, Plus } from 'lucide-react';
 import TodoForm from './components/TodoForm';
 import TodoItem from './components/TodoItem';
 import ToastContainer from './components/ToastContainer';
@@ -14,6 +14,7 @@ import Dashboard from './components/Dashboard';
 import FocusSelectModal from './components/FocusSelectModal';
 import BudgetTrackerPlaceholder from './components/BudgetTrackerPlaceholder';
 import { Todo, ToastData, ToastType, Priority, Category } from './types';
+import { api } from './utils/api';
 
 const USER_STORAGE_KEY = 'taskmaster-current-user';
 
@@ -77,6 +78,9 @@ const App: React.FC = () => {
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   const [isFocusSelectOpen, setIsFocusSelectOpen] = useState(false);
 
+  // Mobile Add Form State
+  const [isMobileAddOpen, setIsMobileAddOpen] = useState(false);
+
   // Timer State
   const [timerDuration, setTimerDuration] = useState(25 * 60); // Default 25 mins
   const [timerLeft, setTimerLeft] = useState(25 * 60);
@@ -109,33 +113,28 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Load todos when user changes
+  // Load todos when user changes via API
   useEffect(() => {
     if (!user) return;
     
-    const userKey = `taskmaster-todos-${user}`;
-    try {
-      const savedTodos = localStorage.getItem(userKey);
-      if (savedTodos) {
-        const parsed = JSON.parse(savedTodos);
-        if (Array.isArray(parsed)) {
-          setTodos(parsed);
-          checkReminders(parsed);
-        } else {
-          setTodos([]);
-        }
-      } else {
+    const fetchTodos = async () => {
+      try {
+        const data = await api.getTodos(user);
+        setTodos(data);
+        checkReminders(data);
+      } catch (error) {
+        console.error("Failed to load todos from API", error);
+        addToast("Failed to load your tasks.", ToastType.ERROR);
         setTodos([]);
       }
-    } catch (error) {
-      console.error("Failed to load todos", error);
-      setTodos([]);
-    }
+    };
+
+    fetchTodos();
   }, [user]);
 
   // Focus Timer Logic
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
     
     if (isTimerActive && timerLeft > 0) {
       interval = setInterval(() => {
@@ -177,13 +176,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Save to local storage
-  useEffect(() => {
-    if (!user) return;
-    const userKey = `taskmaster-todos-${user}`;
-    localStorage.setItem(userKey, JSON.stringify(todos));
-  }, [todos, user]);
-
   // Reset selection when mode changes
   useEffect(() => {
     if (!isSelectionMode) {
@@ -210,7 +202,6 @@ const App: React.FC = () => {
   const handleLogin = (username: string) => {
     localStorage.setItem(USER_STORAGE_KEY, username);
     setUser(username);
-    addToast(`Welcome back, ${username}!`, ToastType.SUCCESS);
   };
 
   const handleLogout = () => {
@@ -232,35 +223,48 @@ const App: React.FC = () => {
   };
 
   // CRUD Operations
-  const addTodo = (text: string, dueDate?: number, priority: Priority = 'medium', category: Category = 'general') => {
-    const newTodo: Todo = {
-      id: Date.now().toString(),
-      text,
-      completed: false,
-      createdAt: Date.now(),
-      dueDate: dueDate,
-      priority: priority,
-      category: category,
-    };
-    setTodos((prev) => [newTodo, ...prev]);
-    addToast("Task added successfully!", ToastType.SUCCESS);
+  const addTodo = async (text: string, dueDate?: number, priority: Priority = 'medium', category: Category = 'general') => {
+    if (!user) return;
+    try {
+      const newTodo = await api.addTodo(user, text, dueDate, priority, category);
+      setTodos((prev) => [newTodo, ...prev]);
+      addToast("Task added successfully!", ToastType.SUCCESS);
+      setIsMobileAddOpen(false); // Close mobile modal on success
+    } catch (e) {
+      addToast("Failed to save task.", ToastType.ERROR);
+    }
   };
 
-  const performToggle = (id: string) => {
-    setTodos((prev) => prev.map(todo => {
-      if (todo.id === id) {
-        const newState = !todo.completed;
-        if (newState) {
-          addToast("Task completed! Great job!", ToastType.SUCCESS, 2000);
-        }
-        return { 
-            ...todo, 
-            completed: newState,
-            completedAt: newState ? Date.now() : undefined
-        };
+  const performToggle = async (id: string) => {
+    const todo = todos.find(t => t.id === id);
+    if (!todo) return;
+    
+    const newState = !todo.completed;
+    const completedAt = newState ? Date.now() : undefined;
+
+    // Optimistic Update
+    setTodos((prev) => prev.map(t => {
+      if (t.id === id) {
+        return { ...t, completed: newState, completedAt };
       }
-      return todo;
+      return t;
     }));
+
+    try {
+      await api.updateTodo(id, { completed: newState, completedAt });
+      if (newState) {
+        addToast("Task completed! Great job!", ToastType.SUCCESS, 2000);
+      }
+    } catch (e) {
+      // Revert if fail
+      setTodos((prev) => prev.map(t => {
+        if (t.id === id) {
+          return { ...t, completed: !newState, completedAt: todo.completedAt };
+        }
+        return t;
+      }));
+      addToast("Failed to update task status.", ToastType.ERROR);
+    }
   };
 
   const toggleTodo = (id: string) => {
@@ -297,36 +301,46 @@ const App: React.FC = () => {
     });
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (deleteModal.type === 'single' && deleteModal.itemId) {
-        // If deleting the focused task, exit focus mode
         if (deleteModal.itemId === focusedTaskId) {
             setIsFocusMode(false);
             setFocusedTaskId(null);
             setIsTimerActive(false);
         }
-        setTodos((prev) => prev.filter(todo => todo.id !== deleteModal.itemId));
-        addToast("Task deleted.", ToastType.INFO);
+        
+        try {
+          await api.deleteTodo(deleteModal.itemId);
+          setTodos((prev) => prev.filter(todo => todo.id !== deleteModal.itemId));
+          addToast("Task deleted.", ToastType.INFO);
+        } catch (e) {
+          addToast("Failed to delete task.", ToastType.ERROR);
+        }
+
     } else if (deleteModal.type === 'bulk') {
-        setTodos(prev => prev.filter(t => !selectedIds.has(t.id)));
-        addToast(`Deleted ${selectedIds.size} tasks.`, ToastType.INFO);
-        setIsSelectionMode(false);
+        const idsToDelete = Array.from(selectedIds);
+        try {
+          await api.bulkDelete(idsToDelete);
+          setTodos(prev => prev.filter(t => !selectedIds.has(t.id)));
+          addToast(`Deleted ${selectedIds.size} tasks.`, ToastType.INFO);
+          setIsSelectionMode(false);
+        } catch (e) {
+          addToast("Failed to bulk delete.", ToastType.ERROR);
+        }
     }
     setDeleteModal({ isOpen: false, type: null });
   };
 
-  const editTodo = (id: string, newText: string) => {
-    setTodos((prev) => prev.map(todo => 
-      todo.id === id ? { ...todo, text: newText } : todo
-    ));
-    addToast("Task updated.", ToastType.SUCCESS);
-  };
-
-  const clearCompleted = () => {
-    const completedCount = todos.filter(t => t.completed).length;
-    if (completedCount === 0) return;
-    setTodos((prev) => prev.filter(todo => !todo.completed));
-    addToast(`Cleared ${completedCount} completed tasks.`, ToastType.INFO);
+  const editTodo = async (id: string, newText: string) => {
+    try {
+      await api.updateTodo(id, { text: newText });
+      setTodos((prev) => prev.map(todo => 
+        todo.id === id ? { ...todo, text: newText } : todo
+      ));
+      addToast("Task updated.", ToastType.SUCCESS);
+    } catch (e) {
+      addToast("Failed to save changes.", ToastType.ERROR);
+    }
   };
 
   // Bulk Actions
@@ -351,20 +365,35 @@ const App: React.FC = () => {
       }
   };
 
-  const handleBulkComplete = () => {
+  const handleBulkComplete = async () => {
     if (selectedIds.size === 0) return;
-    setTodos(prev => prev.map(t => selectedIds.has(t.id) ? { ...t, completed: true, completedAt: Date.now() } : t));
-    addToast(`Marked ${selectedIds.size} tasks as complete.`, ToastType.SUCCESS);
-    setIsSelectionMode(false);
+    const ids = Array.from(selectedIds);
+    const completedAt = Date.now();
+
+    try {
+      await api.bulkUpdate(ids, { completed: true, completedAt });
+      setTodos(prev => prev.map(t => selectedIds.has(t.id) ? { ...t, completed: true, completedAt } : t));
+      addToast(`Marked ${selectedIds.size} tasks as complete.`, ToastType.SUCCESS);
+      setIsSelectionMode(false);
+    } catch (e) {
+      addToast("Failed to update tasks.", ToastType.ERROR);
+    }
   };
 
-  const handleBulkDateChange = (dateString: string) => {
+  const handleBulkDateChange = async (dateString: string) => {
       if (!dateString || selectedIds.size === 0) return;
       const [y, m, d] = dateString.split('-').map(Number);
       const timestamp = new Date(y, m - 1, d).getTime();
-      setTodos(prev => prev.map(t => selectedIds.has(t.id) ? { ...t, dueDate: timestamp } : t));
-      addToast(`Updated due date for ${selectedIds.size} tasks.`, ToastType.SUCCESS);
-      setIsSelectionMode(false);
+      const ids = Array.from(selectedIds);
+      
+      try {
+        await api.bulkUpdate(ids, { dueDate: timestamp });
+        setTodos(prev => prev.map(t => selectedIds.has(t.id) ? { ...t, dueDate: timestamp } : t));
+        addToast(`Updated due date for ${selectedIds.size} tasks.`, ToastType.SUCCESS);
+        setIsSelectionMode(false);
+      } catch (e) {
+        addToast("Failed to update date.", ToastType.ERROR);
+      }
   };
 
   // Focus Mode Handlers
@@ -372,9 +401,8 @@ const App: React.FC = () => {
     if (isFocusMode) {
         setIsFocusMode(false);
         setFocusedTaskId(null);
-        setIsTimerActive(false); // Stop timer
+        setIsTimerActive(false); 
     } else {
-        // Check if there are active tasks
         const hasActiveTasks = todos.some(t => !t.completed);
         if (!hasActiveTasks) {
             addToast("No active tasks to focus on! Add one first.", ToastType.INFO);
@@ -388,7 +416,6 @@ const App: React.FC = () => {
       setFocusedTaskId(id);
       setIsFocusMode(true);
       setIsFocusSelectOpen(false);
-      // Reset timer defaults
       setTimerDuration(25 * 60);
       setTimerLeft(25 * 60);
       setIsTimerActive(false);
@@ -467,8 +494,8 @@ const App: React.FC = () => {
     return todos.length === 0;
   };
 
-  // Get the actual focused task object
   const focusedTask = todos.find(t => t.id === focusedTaskId);
+  const showFab = !isFocusMode && !isSelectionMode && activeView === 'tasks';
 
   if (!user) {
     return (
@@ -502,7 +529,6 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-3">
-               {/* Focus Mode Toggle (Hide on Budget view) */}
                {activeView === 'tasks' && (
                    <button
                       onClick={handleFocusClick}
@@ -515,7 +541,6 @@ const App: React.FC = () => {
                
                <div className={`w-px h-6 mx-1 hidden sm:block transition-colors ${isFocusMode ? 'bg-slate-700' : 'bg-slate-200'}`}></div>
                
-               {/* Other Buttons */}
                <button 
                  onClick={() => setIsHelpOpen(true)} 
                  className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition-all group ${isFocusMode ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-600 hover:shadow-md'}`}
@@ -585,7 +610,6 @@ const App: React.FC = () => {
 
         {/* MAIN CONTENT AREA */}
         {isFocusMode && focusedTask ? (
-             // ... FOCUS MODE VIEW (Unchanged) ...
             <div className="flex flex-col items-center justify-center py-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
                 {/* Focus Timer Component */}
                 <div className="mb-8 w-full max-w-2xl">
@@ -595,12 +619,10 @@ const App: React.FC = () => {
                           <span>Focus Timer</span>
                       </div>
 
-                      {/* Digital Clock */}
                       <div className={`text-7xl sm:text-8xl font-mono font-bold mb-8 tabular-nums tracking-tight transition-colors duration-300 ${isTimerActive ? 'text-white drop-shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'text-slate-400'}`}>
                           {formatTimer(timerLeft)}
                       </div>
 
-                      {/* Controls */}
                       <div className="flex items-center gap-6 mb-8">
                           <button
                             onClick={resetTimer}
@@ -619,7 +641,6 @@ const App: React.FC = () => {
                           </button>
                       </div>
 
-                      {/* Presets */}
                       <div className="flex flex-wrap justify-center gap-3">
                           {[15, 25, 45, 60].map((mins) => (
                               <button
@@ -634,10 +655,8 @@ const App: React.FC = () => {
                    </div>
                 </div>
 
-                {/* The Main Focus Card */}
                 <div className="w-full max-w-2xl transform transition-all hover:scale-[1.01] duration-500">
                      <div className="bg-slate-800 rounded-3xl p-8 border border-slate-700 shadow-2xl shadow-indigo-900/20 relative overflow-hidden group">
-                         {/* Glow Effect */}
                          <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 rounded-full bg-indigo-500/10 blur-3xl group-hover:bg-indigo-500/20 transition-all"></div>
                          
                          <div className="relative z-10">
@@ -688,23 +707,60 @@ const App: React.FC = () => {
 
             </div>
         ) : (
-            /* STANDARD VIEW (Tasks or Budget) */
             <div className="transition-all duration-500">
                 
                 {activeView === 'budget' ? (
-                    /* BUDGET PLACEHOLDER */
                     <BudgetTrackerPlaceholder />
                 ) : (
-                    /* TASK DASHBOARD VIEW */
                     <>
                         <Dashboard user={user} todos={todos} />
 
-                        {/* Input Area */}
-                        <div className={`mb-12 transition-all duration-300 ${isSelectionMode ? 'opacity-50 pointer-events-none blur-sm scale-95' : 'opacity-100 scale-100'}`}>
+                        {/* Desktop Inline Form */}
+                        <div className={`hidden sm:block mb-12 transition-all duration-300 ${isSelectionMode ? 'opacity-50 pointer-events-none blur-sm scale-95' : 'opacity-100 scale-100'}`}>
                             <TodoForm onAdd={addTodo} addToast={addToast} />
                         </div>
 
-                        {/* Filters */}
+                        {/* Mobile FAB */}
+                        {showFab && (
+                           <button
+                             onClick={() => setIsMobileAddOpen(true)}
+                             className="sm:hidden fixed bottom-6 right-6 z-50 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-xl shadow-indigo-500/40 flex items-center justify-center hover:scale-110 active:scale-95 transition-all"
+                             aria-label="Add Task"
+                           >
+                             <Plus className="w-7 h-7" />
+                           </button>
+                        )}
+
+                        {/* Mobile Add Modal (Centered Popup) */}
+                        {isMobileAddOpen && (
+                            <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center sm:hidden px-4 animate-in fade-in duration-200">
+                                {/* Backdrop click handler */}
+                                <div className="absolute inset-0" onClick={() => setIsMobileAddOpen(false)}></div>
+                                
+                                <div 
+                                    className="bg-slate-50 w-full max-w-sm rounded-3xl p-5 shadow-2xl shadow-slate-900/50 animate-in zoom-in-95 duration-300 relative z-10"
+                                    onClick={(e) => e.stopPropagation()} 
+                                >
+                                     <div className="flex justify-between items-center mb-5 pl-2 pr-1">
+                                        <div className="flex items-center gap-2">
+                                            <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl">
+                                                <Plus className="w-5 h-5" />
+                                            </div>
+                                            <h3 className="text-lg font-bold text-slate-800">New Task</h3>
+                                        </div>
+                                        <button 
+                                            onClick={() => setIsMobileAddOpen(false)}
+                                            className="p-2 bg-white border border-slate-100 rounded-full text-slate-400 hover:text-slate-600 shadow-sm transition-colors"
+                                        >
+                                            <X className="w-5 h-5" />
+                                        </button>
+                                     </div>
+                                     
+                                     <TodoForm onAdd={addTodo} addToast={addToast} autoFocus={true} />
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex flex-wrap items-center justify-between gap-4 mb-6 px-1">
                             <div className="flex bg-white p-1.5 rounded-xl shadow-sm border border-gray-100">
                                 {(['all', 'active', 'completed'] as const).map(f => (
@@ -730,7 +786,6 @@ const App: React.FC = () => {
                             )}
                         </div>
 
-                        {/* Task List */}
                         <div className="min-h-[200px] space-y-2">
                             {isListEmpty() ? (
                                 <div className="flex flex-col items-center justify-center py-24 bg-white/50 rounded-3xl border-2 border-dashed border-slate-200/60 backdrop-blur-sm">
@@ -746,7 +801,6 @@ const App: React.FC = () => {
                                 </div>
                             ) : (
                                 <>
-                                    {/* Overdue & Today (Always visible or prioritized) */}
                                     {(filter !== 'completed') && (
                                         <TodoSection 
                                             title="Overdue" 
@@ -773,7 +827,6 @@ const App: React.FC = () => {
                                         </TodoSection>
                                     )}
 
-                                    {/* Upcoming & Inbox */}
                                     {(filter !== 'completed') && (
                                         <TodoSection 
                                             title="Upcoming" 
@@ -825,7 +878,6 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Bulk Actions Bar (Hidden in Focus Mode and Budget View) */}
       {!isFocusMode && activeView === 'tasks' && (
           <div className={`fixed bottom-8 left-1/2 transform -translate-x-1/2 z-40 w-[90%] max-w-md transition-all duration-500 cubic-bezier(0.4, 0, 0.2, 1) ${isSelectionMode && selectedIds.size > 0 ? 'translate-y-0 opacity-100' : 'translate-y-32 opacity-0 pointer-events-none'}`}>
               <div className="bg-slate-900 text-white rounded-2xl shadow-2xl shadow-slate-900/50 p-4 flex items-center justify-between border border-slate-800">
@@ -873,7 +925,6 @@ const App: React.FC = () => {
           </div>
       )}
 
-      {/* Select All Helper */}
       {isSelectionMode && selectedIds.size === 0 && todos.length > 0 && !isFocusMode && activeView === 'tasks' && (
            <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 z-40 animate-slide-in">
                <button 

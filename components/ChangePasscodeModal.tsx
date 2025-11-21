@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, KeyRound, Save, Loader2, ShieldCheck } from 'lucide-react';
 import { AddToastFunction, ToastType } from '../types';
+import { api } from '../utils/api';
 
 interface ChangePasscodeModalProps {
   isOpen: boolean;
@@ -9,8 +10,6 @@ interface ChangePasscodeModalProps {
   username: string;
   addToast: AddToastFunction;
 }
-
-const USERS_DB_KEY = 'taskmaster-users';
 
 const ChangePasscodeModal: React.FC<ChangePasscodeModalProps> = ({
   isOpen,
@@ -43,40 +42,13 @@ const ChangePasscodeModal: React.FC<ChangePasscodeModalProps> = ({
 
     setIsSubmitting(true);
 
-    // Simulate processing delay
-    await new Promise(resolve => setTimeout(resolve, 800));
-
     try {
-      const dbString = localStorage.getItem(USERS_DB_KEY);
-      if (!dbString) {
-        throw new Error("Database not found");
-      }
-
-      const db = JSON.parse(dbString);
-      const userRecord = db[username];
-
-      if (!userRecord) {
-        throw new Error("User record not found");
-      }
-
-      // Verify old passcode
-      if (userRecord.passcode !== currentPasscode) {
-        addToast("Current passcode is incorrect.", ToastType.ERROR);
-        setIsSubmitting(false);
-        return;
-      }
-
-      // Update passcode
-      const updatedUser = { ...userRecord, passcode: newPasscode };
-      const updatedDB = { ...db, [username]: updatedUser };
-
-      localStorage.setItem(USERS_DB_KEY, JSON.stringify(updatedDB));
-      
+      await api.updatePasscode(username, currentPasscode, newPasscode);
       addToast("Passcode updated successfully!", ToastType.SUCCESS);
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to update passcode", error);
-      addToast("An error occurred while updating passcode.", ToastType.ERROR);
+      addToast(error.message || "Incorrect current passcode or server error.", ToastType.ERROR);
     } finally {
       setIsSubmitting(false);
     }

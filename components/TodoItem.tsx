@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Trash2, Edit2, Check, X, Save, CalendarClock, Square, CheckSquare, Loader2, History, Flag, Briefcase, BookOpen, User, Heart, DollarSign, Layers, Undo2 } from 'lucide-react';
+import { Trash2, Edit2, Check, X, Save, CalendarClock, Square, CheckSquare, Loader2, History, Flag, Briefcase, BookOpen, User, Heart, DollarSign, Layers, Undo2, MoreVertical } from 'lucide-react';
 import { Todo, Category, Priority } from '../types';
 
 interface TodoItemProps {
@@ -25,13 +25,32 @@ const TodoItem: React.FC<TodoItemProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editText, setEditText] = useState(todo.text);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  
   const editInputRef = useRef<HTMLInputElement>(null);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isEditing && editInputRef.current) {
       editInputRef.current.focus();
     }
   }, [isEditing]);
+
+  // Close mobile menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (mobileMenuRef.current && !mobileMenuRef.current.contains(event.target as Node)) {
+        setShowMobileMenu(false);
+      }
+    };
+
+    if (showMobileMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showMobileMenu]);
 
   const handleSave = async () => {
     if (editText.trim()) {
@@ -62,7 +81,14 @@ const TodoItem: React.FC<TodoItemProps> = ({
 
   const handleDelete = (e?: React.MouseEvent) => {
     e?.stopPropagation();
+    setShowMobileMenu(false);
     onDelete(todo.id);
+  };
+
+  const handleEditClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      setShowMobileMenu(false);
+      setIsEditing(true);
   };
 
   const handleItemClick = () => {
@@ -124,7 +150,7 @@ const TodoItem: React.FC<TodoItemProps> = ({
     <div 
       onClick={handleItemClick}
       className={`
-        group relative flex items-stretch rounded-2xl transition-all duration-300 ease-out overflow-hidden
+        group relative flex items-stretch rounded-2xl transition-all duration-300 ease-out
         ${isSelectionMode ? 'cursor-pointer' : ''}
         ${isSelected 
             ? 'bg-indigo-50/90 ring-2 ring-indigo-500 shadow-md transform scale-[1.01] z-10' 
@@ -136,7 +162,7 @@ const TodoItem: React.FC<TodoItemProps> = ({
     >
       {/* Left Border for Priority (Only for active tasks) */}
       {!todo.completed && (
-         <div className={`w-1.5 ${getPriorityColor(priority)}`}></div>
+         <div className={`w-1.5 rounded-l-2xl ${getPriorityColor(priority)}`}></div>
       )}
 
       <div className={`flex-1 flex items-center p-4 pl-3 min-w-0 ${todo.completed ? 'pl-5' : ''}`}>
@@ -253,7 +279,58 @@ const TodoItem: React.FC<TodoItemProps> = ({
                 </div>
             </div>
 
-            {/* Hover Actions (Desktop) */}
+            {/* Mobile Actions Menu (Visible sm:hidden) */}
+            {!isSelectionMode && (
+                <div className="sm:hidden ml-2 relative">
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setShowMobileMenu(!showMobileMenu);
+                        }}
+                        className="p-2 text-slate-300 active:text-indigo-600 rounded-full active:bg-indigo-50 transition-colors"
+                    >
+                        <MoreVertical className="w-5 h-5" />
+                    </button>
+                    
+                    {/* Mobile Dropdown */}
+                    {showMobileMenu && (
+                        <>
+                            <div className="fixed inset-0 z-40 bg-black/5" onClick={(e) => { e.stopPropagation(); setShowMobileMenu(false); }}></div>
+                            <div 
+                                ref={mobileMenuRef}
+                                className="absolute right-0 top-10 z-50 w-40 bg-white rounded-xl shadow-xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200 overflow-hidden"
+                            >
+                                {!todo.completed ? (
+                                    <button 
+                                        onClick={handleEditClick}
+                                        className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors border-b border-slate-50"
+                                    >
+                                        <Edit2 className="w-4 h-4" />
+                                        Edit Task
+                                    </button>
+                                ) : (
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); setShowMobileMenu(false); onToggle(todo.id); }}
+                                        className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors border-b border-slate-50"
+                                    >
+                                        <Undo2 className="w-4 h-4" />
+                                        Mark Incomplete
+                                    </button>
+                                )}
+                                <button 
+                                    onClick={handleDelete}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm font-medium text-rose-600 hover:bg-rose-50 transition-colors"
+                                >
+                                    <Trash2 className="w-4 h-4" />
+                                    Delete
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
+
+            {/* Desktop Hover Actions (Hidden on Mobile) */}
             {!isSelectionMode && (
                 <div className={`hidden sm:flex items-center gap-1 transition-all duration-200 ml-3 translate-x-2 ${todo.completed ? 'opacity-0 group-hover:opacity-50 group-hover:hover:opacity-100 group-hover:translate-x-0' : 'opacity-0 group-hover:opacity-100 group-hover:translate-x-0'}`}>
                     {!todo.completed && (
@@ -269,7 +346,7 @@ const TodoItem: React.FC<TodoItemProps> = ({
                         </button>
                     )}
                    
-                   {/* Undo Button for completed items (replaces Edit) */}
+                   {/* Undo Button for completed items */}
                    {todo.completed && (
                        <button 
                             onClick={(e) => {
